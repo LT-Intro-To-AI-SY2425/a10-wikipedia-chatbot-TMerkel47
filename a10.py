@@ -1,203 +1,101 @@
-import re, string, calendar
-from wikipedia import WikipediaPage
-import wikipedia
+import re
+from wikipedia import page
 from bs4 import BeautifulSoup
-from nltk import word_tokenize, pos_tag, ne_chunk
-from nltk.tree import Tree
-from match import match
-from typing import List, Callable, Tuple, Any, Match
+from typing import List  # Add this import for List type hinting
 
+# Fetch and clean the Wikipedia page of Lamborghini automobiles
+def get_page_html(url: str) -> str:
+    """Fetches the HTML of the given Wikipedia page URL"""
+    lamborghini_page = page(url)
+    return lamborghini_page.content
 
-def get_page_html(title: str) -> str:
-    """Gets html of a wikipedia page
-
-    Args:
-        title - title of the page
-
-    Returns:
-        html of the page
-    """
-    results = wikipedia.search(title)
-    return WikipediaPage(results[0]).html()
-
-
-def get_first_infobox_text(html: str) -> str:
-    """Gets first infobox html from a Wikipedia page (summary box)
-
-    Args:
-        html - the full html of the page
-
-    Returns:
-        html of just the first infobox
-    """
+# Helper function to extract the table from the HTML
+def get_table_html(html: str) -> str:
+    """Extracts the HTML of the first table found in the page"""
     soup = BeautifulSoup(html, "html.parser")
-    results = soup.find_all(class_="infobox")
+    tables = soup.find_all("table", {"class": "wikitable"})
+    return str(tables[0]) if tables else ""
 
-    if not results:
-        raise LookupError("Page has no infobox")
-    return results[0].text
+# Function to extract the relevant details (top speed, engine type, production duration) for each model
+def extract_car_info(table_html: str) -> dict:
+    """Extracts key details from the Lamborghini automobile table"""
+    car_info = {}
 
+    # Extract data for each model using regular expressions
+    car_info["models"] = extract_models(table_html)
+    car_info["details"] = {model: {
+        "top_speed": extract_top_speed(table_html, model),
+        "engine_type": extract_engine_type(table_html, model),
+        "production_duration": extract_production_duration(table_html, model)
+    } for model in car_info["models"]}
+    
+    return car_info
 
-def clean_text(text: str) -> str:
-    """Cleans given text removing non-ASCII characters and duplicate spaces & newlines
+# Regex to extract car models from the table
+def extract_models(table_html: str) -> List[str]:
+    """Extracts the names of Lamborghini models from the table"""
+    pattern = r"\[\[([^|]+)\|([^]]+)\]\]"  # Matches the link to the model (e.g., [[Lamborghini Urus|Urus]])
+    matches = re.findall(pattern, table_html)
+    return [match[1].strip().lower() for match in matches]  # Return lowercase names for easier matching
 
-    Args:
-        text - text to clean
+# Regex to extract top speed for a specific model
+def extract_top_speed(table_html: str, model: str) -> str:
+    """Extracts the top speed of the specific car from the table"""
+    pattern = rf"(\[\[{re.escape(model)}\|[^\]]+\]\]).*?Top speed\s*[^0-9]*?(?P<speed>\d+)\s*km/h"
+    match = re.search(pattern, table_html, re.IGNORECASE)
+    return match.group("speed") if match else "Not found"
 
-    Returns:
-        cleaned text
-    """
-    only_ascii = "".join([char if char in string.printable else " " for char in text])
-    no_dup_spaces = re.sub(" +", " ", only_ascii)
-    no_dup_newlines = re.sub("\n+", "\n", no_dup_spaces)
-    return no_dup_newlines
+# Regex to extract engine type for a specific model
+def extract_engine_type(table_html: str, model: str) -> str:
+    """Extracts the engine type of the specific car from the table"""
+    pattern = rf"(\[\[{re.escape(model)}\|[^\]]+\]\]).*?Engine\s*[^A-Za-z]*?(?P<engine_type>[A-Za-z0-9\s\-]+)"
+    match = re.search(pattern, table_html, re.IGNORECASE)
+    return match.group("engine_type") if match else "Not found"
 
+# Regex to extract production duration for a specific model
+def extract_production_duration(table_html: str, model: str) -> str:
+    """Extracts the production duration of the specific car from the table"""
+    pattern = rf"(\[\[{re.escape(model)}\|[^\]]+\]\]).*?Production\s*[^0-9]*?(?P<years>[\d]{4}-[\d]{4})"
+    match = re.search(pattern, table_html, re.IGNORECASE)
+    return match.group("years") if match else "Not found"
 
-def get_match(
-    text: str,
-    pattern: str,
-    error_text: str = "Page doesn't appear to have the property you're expecting",
-) -> Match:
-    """Finds regex matches for a pattern
+# Chatbot query response
+def chatbot_response(query: str, car_info: dict) -> str:
+    """Handles the user's query and responds accordingly"""
+    query = query.lower()
 
-    Args:
-        text - text to search within
-        pattern - pattern to attempt to find within text
-        error_text - text to display if pattern fails to match
+    # Check if the user is asking about a specific model
+    for model in car_info["models"]:
+        if model in query:
+            details = car_info["details"].get(model)
+            if details:
+                if "top speed" in query:
+                    return f"The top speed of the Lamborghini {model.title()} is {details['top_speed']} km/h."
+                elif "engine" in query or "engine type" in query:
+                    return f"The engine type of the Lamborghini {model.title()} is {details['engine_type']}."
+                elif "production" in query or "years of production" in query:
+                    return f"The Lamborghini {model.title()} was produced from {details['production_duration']}."
+                else:
+                    return "Sorry, I didn't understand your question. Please ask about top speed, engine type, or production duration."
+    return "Sorry, I couldn't find that model. Please try again with a valid Lamborghini model."
 
-    Returns:
-        text that matches
-    """
-    p = re.compile(pattern, re.DOTALL | re.IGNORECASE)
-    match = p.search(text)
+if __name__ == "__main__":
+    # URL of the Lamborghini automobiles list page
+    url = "https://en.wikipedia.org/wiki/List_of_Lamborghini_automobiles"
 
-    if not match:
-        raise AttributeError(error_text)
-    return match
+    # Fetch and clean the page data
+    html_content = get_page_html(url)
+    table_html = get_table_html(html_content)
 
-
-def get_polar_radius(planet_name: str) -> str:
-    """Gets the radius of the given planet
-
-    Args:
-        planet_name - name of the planet to get radius of
-
-    Returns:
-        radius of the given planet
-    """
-    infobox_text = clean_text(get_first_infobox_text(get_page_html(planet_name)))
-    pattern = r"(?:Polar radius.*?)(?: ?[\d]+ )?(?P<radius>[\d,.]+)(?:.*?)km"
-    error_text = "Page infobox has no polar radius information"
-    match = get_match(infobox_text, pattern, error_text)
-
-    return match.group("radius")
-
-
-def get_birth_date(name: str) -> str:
-    """Gets birth date of the given person
-
-    Args:
-        name - name of the person
-
-    Returns:
-        birth date of the given person
-    """
-    infobox_text = clean_text(get_first_infobox_text(get_page_html(name)))
-    pattern = r"(?:Born\D*)(?P<birth>\d{4}-\d{2}-\d{2})"
-    error_text = (
-        "Page infobox has no birth information (at least none in xxxx-xx-xx format)"
-    )
-    match = get_match(infobox_text, pattern, error_text)
-
-    return match.group("birth")
-
-
-# below are a set of actions. Each takes a list argument and returns a list of answers
-# according to the action and the argument. It is important that each function returns a
-# list of the answer(s) and not just the answer itself.
-
-
-def birth_date(matches: List[str]) -> List[str]:
-    """Returns birth date of named person in matches
-
-    Args:
-        matches - match from pattern of person's name to find birth date of
-
-    Returns:
-        birth date of named person
-    """
-    return [get_birth_date(" ".join(matches))]
-
-
-def polar_radius(matches: List[str]) -> List[str]:
-    """Returns polar radius of planet in matches
-
-    Args:
-        matches - match from pattern of planet to find polar radius of
-
-    Returns:
-        polar radius of planet
-    """
-    return [get_polar_radius(matches[0])]
-
-
-# dummy argument is ignored and doesn't matter
-def bye_action(dummy: List[str]) -> None:
-    raise KeyboardInterrupt
-
-
-# type aliases to make pa_list type more readable, could also have written:
-# pa_list: List[Tuple[List[str], Callable[[List[str]], List[Any]]]] = [...]
-Pattern = List[str]
-Action = Callable[[List[str]], List[Any]]
-
-# The pattern-action list for the natural language query system. It must be declared
-# here, after all of the function definitions
-pa_list: List[Tuple[Pattern, Action]] = [
-    ("when was % born".split(), birth_date),
-    ("what is the polar radius of %".split(), polar_radius),
-    (["bye"], bye_action),
-]
-
-
-def search_pa_list(src: List[str]) -> List[str]:
-    """Takes source, finds matching pattern and calls corresponding action. If it finds
-    a match but has no answers it returns ["No answers"]. If it finds no match it
-    returns ["I don't understand"].
-
-    Args:
-        source - a phrase represented as a list of words (strings)
-
-    Returns:
-        a list of answers. Will be ["I don't understand"] if it finds no matches and
-        ["No answers"] if it finds a match but no answers
-    """
-    for pat, act in pa_list:
-        mat = match(pat, src)
-        if mat is not None:
-            answer = act(mat)
-            return answer if answer else ["No answers"]
-
-    return ["I don't understand"]
-
-
-def query_loop() -> None:
-    """The simple query loop. The try/except structure is to catch Ctrl-C or Ctrl-D
-    characters and exit gracefully"""
-    print("Welcome to the movie database!\n")
+    # Extract car information (models and their respective details)
+    car_info = extract_car_info(table_html)
+    
+    # Chatbot interaction
+    print("Welcome to the Lamborghini Car Info Chatbot!")
     while True:
-        try:
-            print()
-            query = input("Your query? ").replace("?", "").lower().split()
-            answers = search_pa_list(query)
-            for ans in answers:
-                print(ans)
-
-        except (KeyboardInterrupt, EOFError):
+        user_query = input("Ask about a Lamborghini car: ").strip()
+        if user_query.lower() == "exit":
+            print("Goodbye!")
             break
-
-    print("\nSo long!\n")
-
-
-# uncomment the next line once you've implemented everything are ready to try it out
-query_loop()
+        response = chatbot_response(user_query, car_info)
+        print(response)
