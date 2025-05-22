@@ -1,6 +1,7 @@
 import re
 from wikipedia import page
 from bs4 import BeautifulSoup
+from fuzzywuzzy import fuzz
 from typing import List  # Add this import for List type hinting
 
 # Fetch and clean the Wikipedia page of Lamborghini automobiles
@@ -13,7 +14,14 @@ def get_page_html(url: str) -> str:
 def get_table_html(html: str) -> str:
     """Extracts the HTML of the first table found in the page"""
     soup = BeautifulSoup(html, "html.parser")
-    tables = soup.find_all("table", {"class": "wikitable"})
+    tables = soup.find_all("table")
+
+    # Debugging: Print all tables to check their structure
+    print(f"Debug: Found {len(tables)} tables on the page.")
+    for i, table in enumerate(tables):
+        print(f"Debug: Table {i} HTML snippet: {str(table)[:200]}...")  # Show first 200 characters of each table
+
+    # Return the first table found
     return str(tables[0]) if tables else ""
 
 # Function to extract the relevant details (top speed, engine type, production duration) for each model
@@ -26,9 +34,9 @@ def extract_car_info(table_html: str) -> dict:
     car_info["details"] = {model: {
         "top_speed": extract_top_speed(table_html, model),
         "engine_type": extract_engine_type(table_html, model),
-        "production_duration": extract_production_duration(table_html, model)
+        "duration_of_production": extract_duration_of_production(table_html, model),
     } for model in car_info["models"]}
-    
+
     return car_info
 
 # Regex to extract car models from the table
@@ -36,7 +44,12 @@ def extract_models(table_html: str) -> List[str]:
     """Extracts the names of Lamborghini models from the table"""
     pattern = r"\[\[([^|]+)\|([^]]+)\]\]"  # Matches the link to the model (e.g., [[Lamborghini Urus|Urus]])
     matches = re.findall(pattern, table_html)
-    return [match[1].strip().lower() for match in matches]  # Return lowercase names for easier matching
+    models = [match[1].strip().lower() for match in matches]  # Return lowercase names for easier matching
+
+    # Debugging: print the list of models extracted
+    print(f"Debug: Extracted models: {models}")
+
+    return models
 
 # Regex to extract top speed for a specific model
 def extract_top_speed(table_html: str, model: str) -> str:
@@ -52,32 +65,49 @@ def extract_engine_type(table_html: str, model: str) -> str:
     match = re.search(pattern, table_html, re.IGNORECASE)
     return match.group("engine_type") if match else "Not found"
 
-# Regex to extract production duration for a specific model
-def extract_production_duration(table_html: str, model: str) -> str:
-    """Extracts the production duration of the specific car from the table"""
-    pattern = rf"(\[\[{re.escape(model)}\|[^\]]+\]\]).*?Production\s*[^0-9]*?(?P<years>[\d]{4}-[\d]{4})"
+# Regex to extract "Duration of production" for a specific model
+def extract_duration_of_production(table_html: str, model: str) -> str:
+    """Extracts the 'Duration of production' of the specific car from the table"""
+    pattern = rf"(\[\[{re.escape(model)}\|[^\]]+\]\]).*?Duration of production\s*[^A-Za-z0-9]*?(?P<duration>[\d\–\w\s]+)"
     match = re.search(pattern, table_html, re.IGNORECASE)
-    return match.group("years") if match else "Not found"
+    return match.group("duration") if match else "Not found"
 
 # Chatbot query response
 def chatbot_response(query: str, car_info: dict) -> str:
     """Handles the user's query and responds accordingly"""
-    query = query.lower()
+    query = query.lower().replace(" ", "").replace("-", "")  # Clean up user input
 
-    # Check if the user is asking about a specific model
+    # Debugging: Show all extracted data for the models
+    print(f"Debug: All car info: {car_info['details']}")
+
+    # Use fuzzy matching to find the closest model name to the query
     for model in car_info["models"]:
-        if model in query:
+        match_score = fuzz.partial_ratio(model, query)  # Check the similarity score
+        if match_score >= 80:  # 80 is a good threshold for fuzzy matching
             details = car_info["details"].get(model)
             if details:
+                # Debugging: Show which model is being matched
+                print(f"Debug: Matching model: {model}")
+                print(f"Debug: Details for {model}: {details}")
+                
+                # Top speed query
                 if "top speed" in query:
-                    return f"The top speed of the Lamborghini {model.title()} is {details['top_speed']} km/h."
-                elif "engine" in query or "engine type" in query:
+                    return f"The top speed of the Lamborghini {model.title()} is {details['top_speed']}."
+                # Engine type query
+                elif "engine" in query:
                     return f"The engine type of the Lamborghini {model.title()} is {details['engine_type']}."
-                elif "production" in query or "years of production" in query:
-                    return f"The Lamborghini {model.title()} was produced from {details['production_duration']}."
+                # Production duration query
+                elif "production" in query or "years" in query or "when" in query:
+                    production = details.get('duration_of_production', "").strip()  # Clean up production data
+                    if production == "":
+                        return f"Sorry, I couldn't find production details for the Lamborghini {model.title()}."
+                    elif "present" in production.lower():  # For ongoing production
+                        return f"The Lamborghini {model.title()} is still in production (from {production})."
+                    else:
+                        return f"The Lamborghini {model.title()} was produced during: {production}."
                 else:
-                    return "Sorry, I didn't understand your question. Please ask about top speed, engine type, or production duration."
-    return "Sorry, I couldn't find that model. Please try again with a valid Lamborghini model."
+                    return "Please ask about top speed, engine type, or production duration."
+    return "Sorry, I couldn't find that model. Please try another Lamborghini car."
 
 if __name__ == "__main__":
     # URL of the Lamborghini automobiles list page
